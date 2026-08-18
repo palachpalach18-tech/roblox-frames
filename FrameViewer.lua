@@ -7,7 +7,7 @@ local playerGui = player:WaitForChild("PlayerGui")
 
 local GITHUB_BASE_URL = "https://raw.githubusercontent.com/USER/roblox-frames/main/frames"
 local LOCAL_DIR = "frames"
-local FPS = 10
+local FPS = 30
 local LAYERS = 5
 local SHOW_FPS_COUNTER = true
 local SHOW_DEBUG_PANEL = true
