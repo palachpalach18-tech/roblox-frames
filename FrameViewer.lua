@@ -5,7 +5,7 @@ local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-local GITHUB_BASE_URL = "https://raw.githubusercontent.com/USER/roblox-frames/main/frames"
+local GITHUB_BASE_URL = "https://raw.githubusercontent.com/palachpalach18-tech/roblox-frames/main/frames"
 local LOCAL_DIR = "frames"
 local FPS = 30
 local FRAME_COUNT = 100
