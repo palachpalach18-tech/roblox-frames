@@ -7,8 +7,8 @@ local playerGui = player:WaitForChild("PlayerGui")
 
 local GITHUB_BASE_URL = "https://raw.githubusercontent.com/USER/roblox-frames/main/frames"
 local LOCAL_DIR = "frames"
-local FPS = 60
-local FRAME_COUNT = 300
+local FPS = 30
+local FRAME_COUNT = 100
 local LAYERS = 5
 local SHOW_FPS_COUNTER = true
 local SHOW_DEBUG_PANEL = true
@@ -105,8 +105,6 @@ end
 
 local discoveryTime = os.clock() - discoveryStart
 
--- Use the hardcoded count if discovery found at least that many frames,
--- otherwise fall back to whatever discovery found.
 if actualFrameCount >= FRAME_COUNT then
 	actualFrameCount = FRAME_COUNT
 end
@@ -115,7 +113,6 @@ if actualFrameCount == 0 then
 	error("No frames found — check GITHUB_BASE_URL and that f1.jpg exists.")
 end
 
--- Reassign so the rest of the script uses the resolved count.
 FRAME_COUNT = actualFrameCount
 
 print(string.format(
@@ -237,7 +234,6 @@ end
 
 -- ===== Preload =====
 print("=== Preloading via ContentProvider ===")
-local preloadStart = os.clock()
 local CHUNK_SIZE = 20
 local chunksTotal = math.ceil(FRAME_COUNT / CHUNK_SIZE)
 local chunksDone = 0
@@ -254,9 +250,7 @@ for startIndex = 1, FRAME_COUNT, CHUNK_SIZE do
 			ContentProvider:PreloadAsync(chunk)
 		end)
 		chunksDone += 1
-		if ok then
-			dbg("Preload chunk %d/%d done (%d assets)", chunksDone, chunksTotal, #chunk)
-		else
+		if not ok then
 			warn("Preload chunk failed:", err)
 		end
 	end)
@@ -264,12 +258,6 @@ end
 print(string.format("Preloading started for %d chunks.", chunksTotal))
 
 -- ===== Playback =====
---
--- FIX: The heartbeat no longer tries to catch up by advancing multiple frames
--- per tick. If the game drops below target FPS, we simply advance one frame
--- and push nextSwitchTime forward so we stay in sync going forward, rather
--- than sprinting through accumulated frames and making playback look fast.
---
 local FRONT_Z = 10
 
 local function slotFor(frame)
@@ -283,14 +271,13 @@ local function setSlotImage(frame)
 	end
 end
 
--- Prime the first LAYERS slots so there's no blank frame on startup.
 for f = 1, math.min(LAYERS, FRAME_COUNT) do
 	setSlotImage(f)
 end
 labels[slotFor(1)].ZIndex = FRONT_Z
 
-local currentFrame      = 1
-local nextSwitchTime    = os.clock() + FRAME_TIME
+local currentFrame       = 1
+local nextSwitchTime     = os.clock() + FRAME_TIME
 local advancesThisSecond = 0
 local skippedThisSecond  = 0
 local totalSkipped       = 0
@@ -310,10 +297,6 @@ heartbeatConn = RunService.Heartbeat:Connect(function()
 		return
 	end
 
-	-- Advance exactly one frame per tick regardless of how much time has
-	-- elapsed. Then resync nextSwitchTime to now so we don't accumulate debt.
-	-- This prevents the "speed burst" that occurred when the loop tried to
-	-- catch up by advancing multiple frames at once.
 	local previousFrame = currentFrame
 	currentFrame = (currentFrame % FRAME_COUNT) + 1
 	nextSwitchTime = now + FRAME_TIME
@@ -321,7 +304,6 @@ heartbeatConn = RunService.Heartbeat:Connect(function()
 	advancesThisSecond += 1
 	totalAdvances      += 1
 
-	-- Pre-load the slot that will be needed one full rotation ahead.
 	local primeFrame = ((currentFrame - 1 + (LAYERS - 1)) % FRAME_COUNT) + 1
 	setSlotImage(primeFrame)
 
@@ -344,8 +326,8 @@ heartbeatConn = RunService.Heartbeat:Connect(function()
 				discoveryTime, loadTime
 			)
 		end
-		advancesThisSecond  = 0
-		skippedThisSecond   = 0
-		fpsWindowStart      = now
+		advancesThisSecond = 0
+		skippedThisSecond  = 0
+		fpsWindowStart     = now
 	end
 end)
