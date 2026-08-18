@@ -7,13 +7,14 @@ local playerGui = player:WaitForChild("PlayerGui")
 
 local GITHUB_BASE_URL = "https://raw.githubusercontent.com/USER/roblox-frames/main/frames"
 local LOCAL_DIR = "frames"
-local FPS = 30
+local FPS = 29
+local FRAME_COUNT = 100
 local LAYERS = 5
 local SHOW_FPS_COUNTER = true
 local SHOW_DEBUG_PANEL = true
 local VERBOSE_LOG = true
-local DISCOVERY_BATCH_SIZE = 15 -- concurrent probes per batch
-local MAX_FRAME_CAP = 2000 -- safety ceiling so a misconfigured URL can't loop forever
+local DISCOVERY_BATCH_SIZE = 15
+local MAX_FRAME_CAP = 2000
 
 local startClock = os.clock()
 local function dbg(fmt, ...)
@@ -48,13 +49,13 @@ end
 print("=== Discovery: probing GitHub in parallel batches ===")
 local discoveryStart = os.clock()
 local cacheHits, fetchedCount = 0, 0
-local FRAME_COUNT = 0
 local batchStart = 1
 local stop = false
+local actualFrameCount = 0
 
 while not stop and batchStart <= MAX_FRAME_CAP do
 	local batchEnd = math.min(batchStart + DISCOVERY_BATCH_SIZE - 1, MAX_FRAME_CAP)
-	local results = {} -- [index] = true/false (found or not)
+	local results = {}
 	local pending = 0
 
 	for idx = batchStart, batchEnd do
@@ -86,19 +87,16 @@ while not stop and batchStart <= MAX_FRAME_CAP do
 		task.wait()
 	end
 
-	-- Walk the batch in order; stop at the first gap (handles out-of-order
-	-- completion within the batch since requests can finish in any order)
 	for idx = batchStart, batchEnd do
 		if results[idx] then
-			FRAME_COUNT = idx
+			actualFrameCount = idx
 		else
 			stop = true
 			break
 		end
 	end
 
-	if batchEnd - batchStart + 1 > 0 and FRAME_COUNT < batchEnd then
-		-- Found a gap somewhere in this batch, no need to check further batches
+	if batchEnd - batchStart + 1 > 0 and actualFrameCount < batchEnd then
 		stop = true
 	end
 
@@ -107,13 +105,23 @@ end
 
 local discoveryTime = os.clock() - discoveryStart
 
-if FRAME_COUNT == 0 then
+-- Use the hardcoded count if discovery found at least that many frames,
+-- otherwise fall back to whatever discovery found.
+if actualFrameCount >= FRAME_COUNT then
+	actualFrameCount = FRAME_COUNT
+end
+
+if actualFrameCount == 0 then
 	error("No frames found — check GITHUB_BASE_URL and that f1.jpg exists.")
 end
+
+-- Reassign so the rest of the script uses the resolved count.
+FRAME_COUNT = actualFrameCount
+
 print(string.format(
 	"=== Discovery done: %d frames (%d cached, %d fetched) in %.2fs ===",
 	FRAME_COUNT, cacheHits, fetchedCount, discoveryTime
-	))
+))
 
 local FRAME_TIME = 1 / FPS
 
@@ -187,12 +195,13 @@ if SHOW_DEBUG_PANEL then
 	debugLabel.Parent = screenGui
 end
 
--- ===== Local asset loading (already parallel via task.spawn) =====
+-- ===== Local asset loading =====
 print("=== Loading local assets via getcustomasset ===")
 local loadStart = os.clock()
 local assets = table.create(FRAME_COUNT)
 local loaded = 0
 local loadFailures = {}
+
 for f = 1, FRAME_COUNT do
 	task.spawn(function()
 		local path = LOCAL_DIR .. "/f" .. f .. ".jpg"
@@ -216,21 +225,23 @@ end
 while loaded < FRAME_COUNT do
 	task.wait()
 end
+
 local loadTime = os.clock() - loadStart
 print(string.format(
 	"=== Local load done: %d/%d ok, %d failed, in %.2fs ===",
 	FRAME_COUNT - #loadFailures, FRAME_COUNT, #loadFailures, loadTime
-	))
+))
 if #loadFailures > 0 then
 	warn("Failed frame indices:", table.concat(loadFailures, ", "))
 end
 
--- ===== Preload (already parallel via task.spawn per chunk) =====
+-- ===== Preload =====
 print("=== Preloading via ContentProvider ===")
 local preloadStart = os.clock()
 local CHUNK_SIZE = 20
 local chunksTotal = math.ceil(FRAME_COUNT / CHUNK_SIZE)
 local chunksDone = 0
+
 for startIndex = 1, FRAME_COUNT, CHUNK_SIZE do
 	local chunk = {}
 	for f = startIndex, math.min(startIndex + CHUNK_SIZE - 1, FRAME_COUNT) do
@@ -253,6 +264,12 @@ end
 print(string.format("Preloading started for %d chunks.", chunksTotal))
 
 -- ===== Playback =====
+--
+-- FIX: The heartbeat no longer tries to catch up by advancing multiple frames
+-- per tick. If the game drops below target FPS, we simply advance one frame
+-- and push nextSwitchTime forward so we stay in sync going forward, rather
+-- than sprinting through accumulated frames and making playback look fast.
+--
 local FRONT_Z = 10
 
 local function slotFor(frame)
@@ -266,19 +283,20 @@ local function setSlotImage(frame)
 	end
 end
 
+-- Prime the first LAYERS slots so there's no blank frame on startup.
 for f = 1, math.min(LAYERS, FRAME_COUNT) do
 	setSlotImage(f)
 end
 labels[slotFor(1)].ZIndex = FRONT_Z
 
-local currentFrame = 1
-local nextSwitchTime = os.clock() + FRAME_TIME
+local currentFrame      = 1
+local nextSwitchTime    = os.clock() + FRAME_TIME
 local advancesThisSecond = 0
-local skippedThisSecond = 0
-local totalSkipped = 0
-local totalAdvances = 0
-local fpsWindowStart = os.clock()
-local playbackStart = os.clock()
+local skippedThisSecond  = 0
+local totalSkipped       = 0
+local totalAdvances      = 0
+local fpsWindowStart     = os.clock()
+local playbackStart      = os.clock()
 
 local heartbeatConn
 heartbeatConn = RunService.Heartbeat:Connect(function()
@@ -292,28 +310,22 @@ heartbeatConn = RunService.Heartbeat:Connect(function()
 		return
 	end
 
+	-- Advance exactly one frame per tick regardless of how much time has
+	-- elapsed. Then resync nextSwitchTime to now so we don't accumulate debt.
+	-- This prevents the "speed burst" that occurred when the loop tried to
+	-- catch up by advancing multiple frames at once.
 	local previousFrame = currentFrame
-	local advancesThisTick = 0
-	while now >= nextSwitchTime do
-		nextSwitchTime += FRAME_TIME
-		currentFrame += 1
-		advancesThisTick += 1
-		if currentFrame > FRAME_COUNT then
-			currentFrame = 1
-		end
-	end
-	advancesThisSecond += advancesThisTick
-	totalAdvances += advancesThisTick
-	if advancesThisTick > 1 then
-		local skipped = advancesThisTick - 1
-		skippedThisSecond += skipped
-		totalSkipped += skipped
-	end
+	currentFrame = (currentFrame % FRAME_COUNT) + 1
+	nextSwitchTime = now + FRAME_TIME
 
+	advancesThisSecond += 1
+	totalAdvances      += 1
+
+	-- Pre-load the slot that will be needed one full rotation ahead.
 	local primeFrame = ((currentFrame - 1 + (LAYERS - 1)) % FRAME_COUNT) + 1
 	setSlotImage(primeFrame)
 
-	labels[slotFor(currentFrame)].ZIndex = FRONT_Z
+	labels[slotFor(currentFrame)].ZIndex  = FRONT_Z
 	labels[slotFor(previousFrame)].ZIndex = slotFor(previousFrame)
 
 	if now - fpsWindowStart >= 1 then
@@ -332,8 +344,8 @@ heartbeatConn = RunService.Heartbeat:Connect(function()
 				discoveryTime, loadTime
 			)
 		end
-		advancesThisSecond = 0
-		skippedThisSecond = 0
-		fpsWindowStart = now
+		advancesThisSecond  = 0
+		skippedThisSecond   = 0
+		fpsWindowStart      = now
 	end
 end)
