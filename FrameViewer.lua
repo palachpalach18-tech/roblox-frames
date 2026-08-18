@@ -5,7 +5,7 @@ local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-local FRAME_COUNT = 99
+local FRAME_COUNT = 10
 local FPS = 10
 local FRAME_TIME = 0.1
 
