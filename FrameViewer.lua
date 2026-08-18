@@ -192,6 +192,40 @@ if SHOW_DEBUG_PANEL then
 	debugLabel.Parent = screenGui
 end
 
+-- ===== Audio =====
+local AUDIO_URL = "https://raw.githubusercontent.com/palachpalach18-tech/roblox-frames/main/audio.mp3"
+local AUDIO_PATH = "frames/audio.mp3"
+
+local sound = Instance.new("Sound")
+sound.Name = "FrameAudio"
+sound.Volume = 1
+sound.Looped = true
+sound.Parent = screenGui
+
+-- Download audio if not cached.
+if not isfile(AUDIO_PATH) then
+	dbg("Fetching audio...")
+	local ok, body, status = httpGet(AUDIO_URL)
+	if ok then
+		writefile(AUDIO_PATH, body)
+		dbg("Audio fetched (%d bytes)", #body)
+	else
+		warn("Audio fetch failed (status %s) — video will be silent", tostring(status))
+	end
+end
+
+if isfile(AUDIO_PATH) then
+	local ok, result = pcall(getcustomasset, AUDIO_PATH)
+	if ok then
+		sound.SoundId = result
+		dbg("Audio loaded OK")
+	else
+		warn("getcustomasset failed for audio:", result)
+	end
+else
+	warn("Audio file missing — video will be silent")
+end
+
 -- ===== Local asset loading =====
 print("=== Loading local assets via getcustomasset ===")
 local loadStart = os.clock()
@@ -284,6 +318,12 @@ local totalSkipped       = 0
 local totalAdvances      = 0
 local fpsWindowStart     = os.clock()
 local playbackStart      = os.clock()
+
+	-- Start audio in sync with frame 1.
+	if sound.SoundId ~= "" then
+		sound.TimePosition = 0
+		sound:Play()
+	end
 
 local heartbeatConn
 heartbeatConn = RunService.Heartbeat:Connect(function()
